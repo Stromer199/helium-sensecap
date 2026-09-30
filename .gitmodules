@@ -1,0 +1,9 @@
+[submodule "packet-forwarder"]
+	path = packet-forwarder
+	url = ../hm-pktfwd.git
+[submodule "gateway-config"]
+	path = gateway-config
+	url = ../hm-config.git
+[submodule "multiplexer"]
+	path = multiplexer
+	url = ../hm-multiplexer.git

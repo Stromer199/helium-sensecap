@@ -3,7 +3,7 @@ version: '2'
 services:
 
   gateway-config:
-    image: nebraltd/hm-config:arm64-a198b83
+    build: ./gateway-config
     depends_on:
       - dbus-session
       - helium-miner
@@ -28,7 +28,7 @@ services:
     stop_signal: SIGINT
 
   packet-forwarder:
-    image: stromer199/hm-pktfwd:345c801
+    build: ./packet-forwarder
     depends_on:
       - multiplexer
     restart: always
@@ -44,7 +44,9 @@ services:
       io.balena.features.procfs: 1
 
   multiplexer:
-    image: nebraltd/hm-multiplexer:a1fc09b
+    build:
+      context: ./multiplexer
+      dockerfile: Dockerfile.balena
     restart: always
     depends_on:
       - helium-miner
@@ -88,9 +90,9 @@ services:
       - DIAGNOSTICS_VERSION=6d56740
       - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/host/run/dbus/system_bus_socket
       - GATEWAYRS_VERSION=5428419
-      - CONFIG_VERSION=a198b83
-      - PKTFWD_VERSION=5c3c90a
-      - MULTIPLEXER_VERSION=a1fc09b
+      - CONFIG_VERSION=c584c00
+      - PKTFWD_VERSION=1544d60
+      - MULTIPLEXER_VERSION=8dd10ee
     volumes:
       - pktfwdr:/var/pktfwd
       - miner-storage:/var/data
