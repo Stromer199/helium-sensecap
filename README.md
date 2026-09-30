@@ -31,14 +31,78 @@ forwarder image or uncommitted external checkout is used to compile the radios.
 
 ## First upgrade from a legacy sysfs GPIO release
 
-A previous container may have left the concentrator reset line exported through
-sysfs. If the new reset reports `Device or resource busy`, first ensure the old
-packet-forwarder container has stopped. Follow the guarded one-time migration in
-[packet-forwarder/README.md](packet-forwarder/README.md), using controller offset
-17 for this model. It verifies the GPIO controller and `sysfs` ownership before
-releasing that one export. Restart the packet-forwarder service and verify real
-RF packets and local ACKs. Do not unexport unrelated lines. A cold host boot also
-clears old sysfs exports. The production reset uses GPIO character devices only.
+Old containers can leave both the concentrator reset and user-button lines
+exported through sysfs after they stop. The new packet forwarder or gateway
+configuration service then reports `Device or resource busy`. This is a
+one-time migration owned by the fleet operator, only for confirmed legacy
+exports. First stop and verify that **both old `packet-forwarder` and old
+`gateway-config` containers have stopped**. Keep them stopped throughout the
+procedure; a running old service can export the lines again.
+
+The supported default controller offsets are:
+
+| Hardware variant | Reset | Button |
+| --- | ---: | ---: |
+| SenseCAP M1 (`sensecap-fl1`) | 17 | 27 |
+| Nebra Indoor Gen 1 (`nebra-indoor1`) | 38 | 26 |
+| RAK (`COMP-RAKHM` / `rak-fl1`) | 25 | 7 |
+
+These are controller offsets, not dynamic sysfs GPIO numbers. The example below
+selects SenseCAP M1. Honor any existing explicit pin overrides by verifying and
+adjusting `pins` before running it. Run from a shell in the **new packet-forwarder
+container**. It uses the same controller discovery as the production reset,
+checks every selected line before the first unexport, skips unused lines, and
+aborts if any selected line has another consumer. It never requests or pulses
+the button or reset lines. Do not add unrelated lines.
+
+```sh
+cd /opt
+/usr/bin/python3 - <<'PYTHON'
+import glob
+import os
+from pathlib import Path
+import gpiod
+from pktfwd.reset_gpio import find_gpio_chip
+
+pins = [17, 27]  # reset, button; verified controller offsets for this model
+chip_path = find_gpio_chip(gpiod, pins, os.environ.get("CONCENTRATOR_GPIO_CHIP"))
+with gpiod.Chip(chip_path) as chip:
+    controllers = [Path(path) for path in glob.glob("/sys/class/gpio/gpiochip*")
+                   if (Path(path) / "label").read_text().strip() == chip.label()
+                   and int((Path(path) / "ngpio").read_text()) == chip.num_lines()]
+    if len(controllers) != 1:
+        raise SystemExit("Ambiguous sysfs controller; no lines changed")
+    base = int((controllers[0] / "base").read_text())
+    legacy = []
+    for pin in pins:
+        line = chip.get_line(pin)
+        if not line.is_used():
+            continue
+        if line.consumer() != "sysfs":
+            raise SystemExit("Selected line has another consumer; no lines changed")
+        if not Path("/sys/class/gpio/gpio%d" % (base + pin)).is_dir():
+            raise SystemExit("Missing selected sysfs export; no lines changed")
+        legacy.append(pin)
+    for pin in legacy:
+        line = chip.get_line(pin)
+        line.update()
+        if line.consumer() != "sysfs":
+            raise SystemExit("Ownership changed; stopped without releasing this line")
+        with open("/sys/class/gpio/unexport", "w") as unexport:
+            unexport.write(str(base + pin))
+        print("Released legacy sysfs export", base + pin, "on", chip_path)
+    if not legacy:
+        print("No selected legacy exports to release")
+PYTHON
+```
+
+Never release lines owned by another consumer. After this succeeds, restart the
+new `gateway-config` and `packet-forwarder` services and verify their GPIO
+startup, real RF packets and forwarding. A cold host boot also clears old sysfs
+exports. The production GPIO paths use character devices; no automatic sysfs
+migration is installed. Repeat this operator procedure only if a legacy
+sysfs-based release is rolled back into use, and remove it once those rollback
+releases are retired.
 
 ## Behavior and verification
 
